@@ -2,7 +2,6 @@
 name = "tracegrep"
 version = "0.1.0"
 edition = "2021"
-build = "scripts/build_integration_fixtures.rs"
 
 [lib]
 name = "tracegrep"
