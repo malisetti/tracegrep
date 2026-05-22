@@ -3,13 +3,13 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Read};
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
 use tracegrep::output::{CountFormatter, Formatter, JsonFormatter, TableFormatter};
 use tracegrep::query::{parse, Expr};
-use tracegrep::{parse_auto, sniff, Format, Record, Value};
+use tracegrep::{follow_path, follow_path_with_format, parse_auto, sniff, Format, Record, Value};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum OutputFormat {
@@ -47,7 +47,7 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = OutputFormat::Auto)]
     format: OutputFormat,
 
-    /// Reserved for follow mode (not implemented yet).
+    /// Tail one file (`tail -f`-style polling at EOF via async I/O).
     #[arg(long)]
     follow: bool,
 
@@ -64,11 +64,34 @@ fn main() {
 
 fn try_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let _ = cli.follow;
+    let expr = parse(&cli.query).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    if cli.follow {
+        return run_follow(&cli, &expr);
+    }
 
     let body = read_sources(&cli.files)?;
     let line_fmt = line_format(cli.input, &body);
-    let expr = parse(&cli.query).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    run_batch(&cli, line_fmt, &expr, &body)
+}
+
+fn run_follow(cli: &Cli, expr: &Expr) -> anyhow::Result<()> {
+    if cli.files.len() != 1 {
+        anyhow::bail!("--follow requires exactly one file path (not stdin)");
+    }
+    let path = &cli.files[0];
+    if path.as_os_str() == OsStr::new("-") {
+        anyhow::bail!("--follow does not support stdin; pass a file path");
+    }
+
+    let runtime = tokio::runtime::Runtime::new()?;
+    let path_ref = path.as_path();
+    let line_hint = match cli.input {
+        InputHint::Auto => None,
+        InputHint::Json => Some(Format::JsonLines),
+        InputHint::Logfmt => Some(Format::Logfmt),
+        InputHint::Plain => Some(Format::Plain),
+    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -78,7 +101,49 @@ fn try_main() -> anyhow::Result<()> {
     match eff {
         EffectiveOutput::Json => {
             let mut f = JsonFormatter::new(&mut out);
-            process_lines(&body, line_fmt, &expr, |rec| {
+            match line_hint {
+                None => runtime.block_on(follow_path(path_ref, expr, &mut f))?,
+                Some(lf) => {
+                    runtime.block_on(follow_path_with_format(path_ref, expr, lf, &mut f))?
+                }
+            }
+            f.flush()?;
+        }
+        EffectiveOutput::Count => {
+            let mut f = CountFormatter::new(&mut out);
+            match line_hint {
+                None => runtime.block_on(follow_path(path_ref, expr, &mut f))?,
+                Some(lf) => {
+                    runtime.block_on(follow_path_with_format(path_ref, expr, lf, &mut f))?
+                }
+            }
+            f.flush()?;
+        }
+        EffectiveOutput::Table => {
+            let mut t = TableFormatter::with_default_max_buffer(&mut out);
+            match line_hint {
+                None => runtime.block_on(follow_path(path_ref, expr, &mut t))?,
+                Some(lf) => {
+                    runtime.block_on(follow_path_with_format(path_ref, expr, lf, &mut t))?
+                }
+            }
+            t.flush()?;
+        }
+    }
+
+    Ok(())
+}
+
+fn run_batch(cli: &Cli, line_fmt: Format, expr: &Expr, body: &str) -> anyhow::Result<()> {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let tty = out.is_terminal();
+    let eff = resolve_output(cli.format, tty);
+
+    match eff {
+        EffectiveOutput::Json => {
+            let mut f = JsonFormatter::new(&mut out);
+            process_lines(body, line_fmt, expr, |rec| {
                 f.write(rec)?;
                 Ok(())
             })?;
@@ -86,7 +151,7 @@ fn try_main() -> anyhow::Result<()> {
         }
         EffectiveOutput::Count => {
             let mut f = CountFormatter::new(&mut out);
-            process_lines(&body, line_fmt, &expr, |rec| {
+            process_lines(body, line_fmt, expr, |rec| {
                 f.write(rec)?;
                 Ok(())
             })?;
@@ -94,12 +159,11 @@ fn try_main() -> anyhow::Result<()> {
         }
         EffectiveOutput::Table => {
             let mut t = TableFormatter::with_default_max_buffer(&mut out);
-            process_lines(&body, line_fmt, &expr, |rec| {
+            process_lines(body, line_fmt, expr, |rec| {
                 t.push_row(record_to_row(rec))?;
                 Ok(())
             })?;
             t.flush()?;
-            out.flush()?;
         }
     }
 

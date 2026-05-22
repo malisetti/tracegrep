@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 
+use super::Formatter;
+use crate::{Record, Value};
+
 pub const DEFAULT_MAX_BUFFER: usize = 1000;
 
 /// Tabular formatter: buffers heterogeneous rows (`BTreeMap<String, String>`) until [`Self::flush`]
@@ -200,4 +203,29 @@ fn pad_field<W: Write>(writer: &mut W, cell: &str, width_chars: usize) -> io::Re
         write!(writer, " ")?;
     }
     Ok(())
+}
+
+fn record_scalar_display(v: &Value) -> String {
+    match v {
+        Value::Str(s) => s.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Int(n) => n.to_string(),
+        Value::Float(x) => format!("{x}"),
+        Value::Null => String::new(),
+    }
+}
+
+impl<W: Write> Formatter for TableFormatter<W> {
+    fn write(&mut self, r: &Record) -> io::Result<()> {
+        let mut row = BTreeMap::new();
+        for field in r.iter() {
+            row.insert(field.name.to_string(), record_scalar_display(field.value));
+        }
+        row.insert("_raw".to_string(), r.raw().to_string());
+        TableFormatter::push_row(self, row)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        TableFormatter::flush(self)
+    }
 }
