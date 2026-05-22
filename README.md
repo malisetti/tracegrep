@@ -1,3 +1,3 @@
 # tracegrep
 
-Rust CLI for querying structured logs (scaffold placeholder; README expands in later milestones).
+Rust CLI scaffold (`tracegrep`): structured log query tool (jq-for-json-lines/logfmt). README expands in milestone S14.
