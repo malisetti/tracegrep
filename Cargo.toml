@@ -2,6 +2,7 @@
 name = "tracegrep"
 version = "0.1.0"
 edition = "2021"
+build = "scripts/build_integration_fixtures.rs"
 
 [lib]
 name = "tracegrep"
@@ -18,5 +19,10 @@ tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 assert_cmd = "2"
+criterion = "0.5"
 predicates = "3"
 tempfile = "3"
+
+[[bench]]
+name = "parse_bench"
+harness = false
