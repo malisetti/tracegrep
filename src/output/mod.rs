@@ -6,10 +6,12 @@ pub trait Formatter {
     fn flush(&mut self) -> std::io::Result<()>;
 }
 
+mod color;
 mod count;
 mod json;
 pub mod table;
 
+pub use color::ColorWriter;
 pub use count::CountFormatter;
 pub use json::JsonFormatter;
 pub use table::TableFormatter;
