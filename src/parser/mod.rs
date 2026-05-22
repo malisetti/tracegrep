@@ -2,7 +2,9 @@
 
 mod json;
 
+pub mod detect;
 pub mod logfmt;
 
+pub use detect::{parse_auto, sniff, Format};
 pub use json::parse_json_line;
 pub use logfmt::parse_logfmt_line;
