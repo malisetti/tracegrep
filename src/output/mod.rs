@@ -1,4 +1,4 @@
-//! Output writers for matched records (`json` lines, `count`, etc.).
+//! Output writers for matched records (`json` lines, `count`, table, etc.).
 use crate::Record;
 
 pub trait Formatter {
@@ -8,6 +8,8 @@ pub trait Formatter {
 
 mod count;
 mod json;
+pub mod table;
 
 pub use count::CountFormatter;
 pub use json::JsonFormatter;
+pub use table::TableFormatter;
