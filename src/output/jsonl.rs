@@ -11,11 +11,22 @@ use super::Formatter;
 /// buffer internally until flush).
 pub struct JsonLinesFormatter<W: Write> {
     writer: W,
+    attach_raw_footer: bool,
 }
 
 impl<W: Write> JsonLinesFormatter<W> {
     pub fn new(w: W) -> Self {
-        Self { writer: w }
+        Self {
+            writer: w,
+            attach_raw_footer: true,
+        }
+    }
+
+    pub fn without_raw_footer(writer: W) -> Self {
+        Self {
+            writer,
+            attach_raw_footer: false,
+        }
     }
 }
 
@@ -32,18 +43,20 @@ fn scalar_to_json(value: &crate::Value) -> JsonValue {
     }
 }
 
-fn record_json(r: &Record) -> JsonValue {
+fn record_json(r: &Record, attach_raw_footer: bool) -> JsonValue {
     let mut map = Map::new();
     for field in r.iter() {
         map.insert(field.name.to_string(), scalar_to_json(field.value));
     }
-    map.insert("_raw".to_owned(), JsonValue::String(r.raw().to_string()));
+    if attach_raw_footer {
+        map.insert("_raw".to_owned(), JsonValue::String(r.raw().to_string()));
+    }
     JsonValue::Object(map)
 }
 
 impl<W: Write> Formatter for JsonLinesFormatter<W> {
     fn write(&mut self, r: &Record) -> io::Result<()> {
-        serde_json::to_writer(&mut self.writer, &record_json(r))?;
+        serde_json::to_writer(&mut self.writer, &record_json(r, self.attach_raw_footer))?;
         self.writer.write_all(b"\n")?;
         self.writer.flush()
     }

@@ -1,5 +1,6 @@
 //! Skip-blank line parsing wrappers and per-line `--input=auto` style detection.
 
+use crate::diagnostics::DiagnosticsSink;
 use crate::parser::detect::{parse_auto as parse_auto_with_format, Format};
 use crate::{Record, RecordError};
 
@@ -62,6 +63,100 @@ fn has_word_key_equals_prefix(s: &str) -> bool {
 
 fn is_word_byte(c: u8) -> bool {
     matches!(c, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_')
+}
+
+/// CLI-facing input hints (stdin / `--input`) shared with stderr diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CliInputHint {
+    Auto,
+    Json,
+    Logfmt,
+    Plain,
+}
+
+/// Result of interpreting one physical input line after blank handling.
+#[derive(Debug)]
+pub enum ParsedCliLine {
+    /// Blank line or a line intentionally skipped (--no-strict parse failure).
+    Ignored,
+    Record(Record),
+}
+
+impl ParsedCliLine {
+    pub fn into_record(self) -> Option<Record> {
+        match self {
+            ParsedCliLine::Ignored => None,
+            ParsedCliLine::Record(r) => Some(r),
+        }
+    }
+}
+
+pub fn cli_hint_from_format(fmt: Format) -> CliInputHint {
+    match fmt {
+        Format::JsonLines => CliInputHint::Json,
+        Format::Logfmt => CliInputHint::Logfmt,
+        Format::Plain => CliInputHint::Plain,
+    }
+}
+
+fn record_err_cli(err: RecordError) -> String {
+    err.to_string()
+}
+
+/// Strict mode aborts non-blank lines that fail parsing. Non-strict records a stderr warning via
+/// `diag` when present and skips the line (returns [`ParsedCliLine::Ignored`]).
+pub fn parse_cli_line<W: std::io::Write>(
+    line: &str,
+    lineno: u64,
+    hint: CliInputHint,
+    strict: bool,
+    diag_slot: &mut Option<&mut DiagnosticsSink<W>>,
+) -> anyhow::Result<ParsedCliLine> {
+    let line = line.trim_end();
+    if line.trim().is_empty() {
+        return Ok(ParsedCliLine::Ignored);
+    }
+
+    fn handle_parse_err<Wx: std::io::Write>(
+        diag_slot: &mut Option<&mut DiagnosticsSink<Wx>>,
+        lineno: u64,
+        strict: bool,
+        err: RecordError,
+    ) -> anyhow::Result<ParsedCliLine> {
+        let msg = record_err_cli(err);
+        if strict {
+            if let Some(d) = diag_slot.as_mut() {
+                d.record_error(lineno, &msg);
+            }
+            anyhow::bail!("line {lineno}: {msg}");
+        }
+        if let Some(d) = diag_slot.as_mut() {
+            d.record_skip(lineno, &format!("parse: {msg}"));
+        }
+        Ok(ParsedCliLine::Ignored)
+    }
+
+    match hint {
+        CliInputHint::Auto => match parse_auto_perline(line) {
+            None => Ok(ParsedCliLine::Ignored),
+            Some(Ok(rec)) => Ok(ParsedCliLine::Record(rec)),
+            Some(Err(e)) => handle_parse_err(diag_slot, lineno, strict, e),
+        },
+        CliInputHint::Json => match parse_json_line_skip(line) {
+            None => Ok(ParsedCliLine::Ignored),
+            Some(Ok(rec)) => Ok(ParsedCliLine::Record(rec)),
+            Some(Err(e)) => handle_parse_err(diag_slot, lineno, strict, e),
+        },
+        CliInputHint::Logfmt => match parse_logfmt_line_skip(line) {
+            None => Ok(ParsedCliLine::Ignored),
+            Some(Ok(rec)) => Ok(ParsedCliLine::Record(rec)),
+            Some(Err(e)) => handle_parse_err(diag_slot, lineno, strict, e),
+        },
+        CliInputHint::Plain => match parse_auto_with_format(line, Format::Plain) {
+            Ok(rec) => Ok(ParsedCliLine::Record(rec)),
+            Err(e) => handle_parse_err(diag_slot, lineno, strict, e),
+        },
+    }
 }
 
 #[cfg(test)]

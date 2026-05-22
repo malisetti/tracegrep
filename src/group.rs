@@ -7,14 +7,18 @@ use std::collections::BTreeMap;
 /// The group key for a missing field is `""`. [`Value::Null`] also buckets as `""`.
 /// Other variants use a stable textual form suitable for grouping (strings as-is,
 /// integers and booleans via `to_string`, floats formatted without spurious decimals when exact).
+pub fn bump_group_count(map: &mut BTreeMap<String, u64>, record: &Record, field: &str) {
+    let key = match record.get(field) {
+        None => String::new(),
+        Some(v) => value_to_group_key(v),
+    };
+    *map.entry(key).or_insert(0) += 1;
+}
+
 pub fn group_count<I: IntoIterator<Item = Record>>(it: I, field: &str) -> BTreeMap<String, u64> {
     let mut out: BTreeMap<String, u64> = BTreeMap::new();
     for record in it {
-        let key = match record.get(field) {
-            None => String::new(),
-            Some(v) => value_to_group_key(v),
-        };
-        *out.entry(key).or_insert(0) += 1;
+        bump_group_count(&mut out, &record, field);
     }
     out
 }

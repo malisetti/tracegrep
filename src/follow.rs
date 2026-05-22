@@ -1,5 +1,6 @@
 //! Streaming follow mode (`--follow`): tail a file line-by-line with polling at EOF.
 
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
@@ -7,9 +8,21 @@ use anyhow::Context;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader, SeekFrom};
 
+use crate::diagnostics::DiagnosticsSink;
 use crate::output::Formatter;
+use crate::parser::resilience::{
+    cli_hint_from_format, parse_cli_line, CliInputHint, ParsedCliLine,
+};
 use crate::query::Expr;
-use crate::{parse_auto, sniff, Format};
+use crate::{sniff, Format};
+
+/// How each tailed physical line should be parsed (CLI `--input` analogue).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FollowParseSpec {
+    /// Per-line sniff + parse (`--input auto` batch semantics).
+    AutoPerLine,
+    Fixed(Format),
+}
 
 /// Resolve line format using the **first non-empty line** without consuming the tail cursor.
 pub async fn sniff_line_format(path: &Path) -> anyhow::Result<Format> {
@@ -41,7 +54,19 @@ pub async fn follow_path<F: Formatter>(
     fmt: &mut F,
 ) -> anyhow::Result<()> {
     let line_fmt = sniff_line_format(path).await?;
-    follow_path_with_format(path, expr, line_fmt, fmt).await
+    let mut silent_match = false;
+    let mut sink = io::sink();
+    let mut silent = DiagnosticsSink::new(&mut sink);
+    follow_tail(
+        path,
+        expr,
+        fmt,
+        FollowParseSpec::Fixed(line_fmt),
+        true,
+        Some(&mut silent),
+        &mut silent_match,
+    )
+    .await
 }
 
 /// Same as [`follow_path`], using an explicit detected or CLI-selected [`Format`] (skips sniff).
@@ -50,6 +75,31 @@ pub async fn follow_path_with_format<F: Formatter>(
     expr: &Expr,
     line_fmt: Format,
     fmt: &mut F,
+) -> anyhow::Result<()> {
+    let mut silent_match = false;
+    let mut sink = io::sink();
+    let mut silent = DiagnosticsSink::new(&mut sink);
+    follow_tail(
+        path,
+        expr,
+        fmt,
+        FollowParseSpec::Fixed(line_fmt),
+        true,
+        Some(&mut silent),
+        &mut silent_match,
+    )
+    .await
+}
+
+/// Tail-follow `path` with [`parse_cli_line`] semantics (--strict/--no-strict diagnostics).
+pub async fn follow_tail<F: Formatter, W: io::Write>(
+    path: &Path,
+    expr: &Expr,
+    fmt: &mut F,
+    parse_spec: FollowParseSpec,
+    strict: bool,
+    mut diag: Option<&mut DiagnosticsSink<W>>,
+    any_match: &mut bool,
 ) -> anyhow::Result<()> {
     let mut file = File::open(path)
         .await
@@ -60,6 +110,11 @@ pub async fn follow_path_with_format<F: Formatter>(
         .with_context(|| format!("seek end {}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut lineno: usize = 0;
+
+    let cli_hint = match parse_spec {
+        FollowParseSpec::AutoPerLine => CliInputHint::Auto,
+        FollowParseSpec::Fixed(format) => cli_hint_from_format(format),
+    };
 
     loop {
         let mut line = String::new();
@@ -90,15 +145,15 @@ pub async fn follow_path_with_format<F: Formatter>(
         }
 
         lineno += 1;
-        if line.trim().is_empty() {
-            continue;
-        }
 
-        let record = parse_auto(line.trim_end(), line_fmt)
-            .map_err(|e| anyhow::anyhow!("line {}: {}", lineno, e))?;
-        if expr.eval(&record) {
-            fmt.write(&record)
-                .map_err(|e| anyhow::anyhow!("format write: {e}"))?;
+        match parse_cli_line(line.trim_end(), lineno as u64, cli_hint, strict, &mut diag)? {
+            ParsedCliLine::Ignored => {}
+            ParsedCliLine::Record(ref record) if expr.eval(record) => {
+                *any_match = true;
+                fmt.write(record)
+                    .map_err(|e| anyhow::anyhow!("format write: {e}"))?;
+            }
+            ParsedCliLine::Record(_) => {}
         }
     }
 }
