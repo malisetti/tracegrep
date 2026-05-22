@@ -1,2 +1,3 @@
 # tracegrep
-jq-for-structured-logs CLI built by nfltr distributed orchestration
+
+Rust CLI for querying structured logs (scaffold placeholder; README expands in later milestones).
