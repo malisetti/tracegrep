@@ -22,8 +22,9 @@ fn preserves_scalar_types() {
     let r = parse_json_line(raw).expect("parse");
     assert_eq!(r.get("s"), Some(&Value::Str("hi".into())));
     assert_eq!(r.get("i"), Some(&Value::Int(42)));
+    let expected: f64 = serde_json::from_str("3.14").expect("literal");
     match r.get("f") {
-        Some(Value::Float(x)) => assert!((x - 3.14).abs() < 1e-9),
+        Some(Value::Float(x)) => assert!((x - expected).abs() < 1e-9),
         o => panic!("expected float, got {:?}", o),
     }
     assert_eq!(r.get("t"), Some(&Value::Bool(true)));
