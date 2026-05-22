@@ -9,9 +9,11 @@ pub trait Formatter {
 mod color;
 mod count;
 mod json;
+pub mod jsonl;
 pub mod table;
 
 pub use color::ColorWriter;
 pub use count::CountFormatter;
 pub use json::JsonFormatter;
+pub use jsonl::JsonLinesFormatter;
 pub use table::TableFormatter;
