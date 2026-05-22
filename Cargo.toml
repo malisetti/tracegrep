@@ -1,6 +1,13 @@
 [package]
 name = "tracegrep"
-version = "0.1.0"
+version = "0.2.0"
+description = "jq-for-structured-logs: query JSON-lines and logfmt streams with a small expression language"
+repository = "https://github.com/malisetti/tracegrep"
+license = "MIT OR Apache-2.0"
+keywords = ["log", "query", "jq", "logfmt", "json-lines"]
+categories = ["command-line-utilities", "text-processing"]
+readme = "README.md"
+rust-version = "1.70"
 edition = "2021"
 
 [lib]
