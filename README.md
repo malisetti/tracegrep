@@ -6,19 +6,75 @@
 
 ## Install
 
-Published (once crates.io publishes this crate):
+From [crates.io](https://crates.io/crates/tracegrep) (recommended once published):
 
 ```bash
 cargo install tracegrep
+cargo install tracegrep --version "^0.2"
+tracegrep --version
 ```
 
-From this checkout:
+From a git checkout (see [CHANGELOG.md](CHANGELOG.md) for releases):
 
 ```bash
 git clone https://github.com/malisetti/tracegrep.git && cd tracegrep
-cargo install --path .
+cargo install --locked --path .
 tracegrep --version
 ```
+
+Rust **1.70+** matches this crate's `rust-version` in `Cargo.toml`.
+
+---
+
+## v0.2.0 — CLI polish
+
+Structured exit codes (**0** = matches, **1** = no matches, **2** = error) behave like **`grep`**; malformed lines integrate with **`--strict` / `--no-strict`**; **`--input=auto`** sniffs format **per physical line**.
+
+**Recover from bad lines (`--no-strict`)**
+
+```bash
+printf '%s\n' '{"broken' '{"level":"error","msg":"late"}' \
+  | tracegrep --input json --no-strict 'level = "error"' --format count
+```
+
+**Stream NDJSON one record at a time (`--jsonl`)**
+
+```bash
+printf '%s\n' '{"msg":"timeout"}' '{"msg":"steady"}' \
+  | tracegrep --input json --format json --jsonl 'msg ~ "timeout"'
+```
+
+**Project columns (`--field`)**
+
+```bash
+printf '%s\n' '{"level":"error","svc":"pay","msg":"timeout"}' \
+  | tracegrep --input json --format json --field level,svc 'svc = "pay"'
+```
+
+**Bucket match counts (`--group-by`)**
+
+```bash
+printf '%s\n' \
+  '{"level":"error","host":"a"}' \
+  '{"level":"error","host":"b"}' \
+  '{"level":"error","host":"a"}' \
+  '{"level":"info","host":"z"}' \
+  | tracegrep --input json --format count --group-by host 'level = "error"'
+```
+
+Expect tab-separated **`host<count>` lines** sorted by bucket.
+
+**Several files & tail-follow**
+
+Multiple positional paths concatenate inputs in batch mode:
+
+```bash
+tracegrep --input json 'level = "error"' ./one.jsonl ./two.jsonl --format count
+```
+
+`--follow` tails **one** path at a time; run **`tracegrep --follow`** once per append-only stream (shell background jobs or supervisors) when you want live multi-file coverage.
+
+Diagnostics for skipped lines emit on **stderr**; use **`--no-color`** when piping table output through tools that choke on ANSI.
 
 ---
 
@@ -91,7 +147,7 @@ Double-quoted strings, booleans, integers, floats.
 
 | Flag | Choices | Behaviour |
 |------|---------|-----------|
-| `--input auto` \| `json` \| `logfmt` \| `plain` | Sniff-first-line auto-detect: `{…}` ⇒ JSON-lines, `word=value…` heuristic ⇒ logfmt; else `_raw/+msg`. |
+| `--input auto` \| `json` \| `logfmt` \| `plain` | **`auto`** re-sniffs **each line**: `{…}` ⇒ JSON-lines, `word=value…` heuristic ⇒ logfmt; otherwise plain `_raw`/optional `msg`. |
 | `--format auto` \| `json` \| `table` \| `count` | **`auto`** → **table on TTY**, **JSON lines** on pipes. **`count`** → integer then newline. |
 | `--follow` | **Exactly one file path**: tail EOF with **Tokio**, **100 ms** sleeps at EOF; reopens if truncated; `--input json` skips fragile sniff-on-empty-tail. |
 
