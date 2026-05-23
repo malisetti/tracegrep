@@ -1,0 +1,6 @@
+---
+source: tests/integration.rs
+expression: s
+---
+tracegrep: warning: line 2: parse: parse: key must be a string at line 1 column 2
+tracegrep: 1 line skipped (use --strict to abort on first)

@@ -19,6 +19,7 @@ tokio = { version = "1", features = ["full"] }
 [dev-dependencies]
 assert_cmd = "2"
 criterion = "0.5"
+insta = "1"
 predicates = "3"
 tempfile = "3"
 

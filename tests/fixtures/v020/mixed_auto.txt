@@ -1,0 +1,2 @@
+{"kind":"svc","tier":"silver","cost":40}
+tier=gold code=READY svc=payments

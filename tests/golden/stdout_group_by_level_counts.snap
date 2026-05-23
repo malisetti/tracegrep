@@ -1,0 +1,6 @@
+---
+source: tests/integration.rs
+expression: s
+---
+error	2
+info	1
