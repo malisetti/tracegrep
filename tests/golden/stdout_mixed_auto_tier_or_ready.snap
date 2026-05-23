@@ -1,0 +1,6 @@
+---
+source: tests/integration.rs
+expression: s
+---
+{"_raw":"{\"kind\":\"svc\",\"tier\":\"silver\",\"cost\":40}","cost":40,"kind":"svc","tier":"silver"}
+{"_raw":"tier=gold code=READY svc=payments","code":"READY","svc":"payments","tier":"gold"}

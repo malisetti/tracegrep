@@ -1,0 +1,6 @@
+---
+source: tests/integration.rs
+expression: s
+---
+{"_raw":"{\"kind\":\"warm\",\"n\":1}","kind":"warm","n":1}
+{"_raw":"{\"kind\":\"warm\",\"n\":2}","kind":"warm","n":2}

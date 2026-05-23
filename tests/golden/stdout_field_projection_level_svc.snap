@@ -1,0 +1,7 @@
+---
+source: tests/integration.rs
+expression: s
+---
+{"level":"error","svc":"alpha"}
+{"level":"info"}
+{"level":"error","svc":"beta"}

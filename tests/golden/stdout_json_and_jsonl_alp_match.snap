@@ -1,0 +1,5 @@
+---
+source: tests/integration.rs
+expression: s
+---
+{"_raw":"{\"level\":\"error\",\"svc\":\"alpha\",\"all\":true}","all":true,"level":"error","svc":"alpha"}

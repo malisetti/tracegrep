@@ -9,10 +9,6 @@ categories = ["command-line-utilities", "text-processing"]
 readme = "README.md"
 rust-version = "1.70"
 edition = "2021"
-rust-version = "1.70"
-description = "jq-ish queries for JSON-lines and logfmt"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/malisetti/tracegrep"
 
 [features]
 bench = ["dep:criterion"]
@@ -33,8 +29,9 @@ thiserror = "=1.0.40"
 tokio = { version = "=1.28.2", features = ["macros", "rt-multi-thread", "fs", "io-util", "time"] }
 
 [dev-dependencies]
-assert_cmd = "=1.0.8"
-predicates = "=2.1.5"
+assert_cmd = "=2.0.12"
+insta = "=1.47.2"
+predicates = "=3.0.4"
 tempfile = "=3.10.1"
 
 [[bench]]
