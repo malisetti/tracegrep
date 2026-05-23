@@ -204,8 +204,8 @@ printf '%s\n' \
 Per record: **`serde_json`/`logfmt` parse + evaluator** dominates; **`~`** amortizes **`Regex`** construction query-wide. **`--follow`** sleeps on idle EOF. Estimate with **`criterion`**:
 
 ```bash
-cargo bench --bench parse_bench --no-run
-cargo bench --bench parse_bench
+cargo bench --features bench --bench parse_bench --no-run
+cargo bench --features bench --bench parse_bench
 ```
 
 The harness parses **1 000** synthetic records per JSON/logfmt iteration.

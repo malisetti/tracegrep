@@ -1,14 +1,48 @@
 name: CI
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   rust:
+    name: Rust (${{ matrix.os }}, Rust ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, "1.70"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+
+      - run: cargo build --release
+
+      - run: cargo test --release
+
+      - run: cargo clippy --no-deps -- -D warnings
+
+      - run: cargo fmt --check
+
+  bench:
+    name: Bench compile check (Ubuntu, stable)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
-      - run: cargo test
-      - run: cargo clippy -- -D warnings
-      - run: cargo fmt --check
+
+      - run: cargo bench --no-run --features bench
+
+  publish-dry-run:
+    name: cargo publish --dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: cargo publish --dry-run
