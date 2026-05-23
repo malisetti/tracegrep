@@ -93,11 +93,11 @@ Double-quoted strings, booleans, integers, floats.
 |------|---------|-----------|
 | `--input auto` \| `json` \| `logfmt` \| `plain` | Sniff-first-line auto-detect: `{…}` ⇒ JSON-lines, `word=value…` heuristic ⇒ logfmt; else `_raw/+msg`. |
 | `--format auto` \| `json` \| `table` \| `count` | **`auto`** → **table on TTY**, **JSON lines** on pipes. **`count`** → integer then newline. |
-| `--follow` | **Exactly one file path**: tail EOF with **Tokio**, **100 ms** sleeps at EOF; reopens if truncated; `--input json` skips fragile sniff-on-empty-tail. |
+| `--follow` | **One or more file paths** (no stdin): **Tokio** multiplexer runs a tail loop per path (100 ms EOF polling, reopen on shrink). **Single path** keeps legacy output (no prefixes). **`≥ 2` paths (`tail -f` style)** prefix each emitted match line with **`==> path <==`**. **Multi-file `--follow`** sniffs formats per path (CLI `--input` applies only on single-file `--follow`). |
 
 Emissions expose `_raw` for every structured line.
 
-**Library sketches:** `cargo run --example query_in_memory`; `cargo run --example follow_file -- /tmp/stream.jsonl`.
+**Library sketches:** `cargo run --example query_in_memory`; `cargo run --example follow_file -- /tmp/stream.jsonl`. Library entry point for multi-file multiplex: `tracegrep::follow_paths`.
 
 ---
 
