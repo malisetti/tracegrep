@@ -2,6 +2,13 @@
 name = "tracegrep"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.70"
+description = "jq-ish queries for JSON-lines and logfmt"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/malisetti/tracegrep"
+
+[features]
+bench = ["dep:criterion"]
 
 [lib]
 name = "tracegrep"
@@ -9,23 +16,26 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-regex = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "1"
-tokio = { version = "1", features = ["full"] }
+clap = { version = ">=4.0, <=4.4.18", features = ["derive"] }
+criterion = { version = "=0.3.6", optional = true }
+regex = "=1.9.4"
+serde = { version = "=1.0.171", features = ["derive"] }
+serde_json = "=1.0.108"
+thiserror = "=1.0.40"
+# Pin runtime stack for rustc 1.70 (Cargo.lock resolver). Tokio uses only what `--follow`/tests need.
+tokio = { version = "=1.28.2", features = ["macros", "rt-multi-thread", "fs", "io-util", "time"] }
 
 [dev-dependencies]
-assert_cmd = "2"
-criterion = "0.5"
-predicates = "3"
-tempfile = "3"
+assert_cmd = "=1.0.8"
+predicates = "=2.1.5"
+tempfile = "=3.10.1"
 
 [[bench]]
 name = "parse_bench"
 harness = false
+required-features = ["bench"]
 
 [[bench]]
 name = "eval_bench"
 harness = false
+required-features = ["bench"]
