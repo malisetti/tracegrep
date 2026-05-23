@@ -7,7 +7,7 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
-use tracegrep::follow::{follow_tail, FollowParseSpec};
+use tracegrep::follow::{follow_paths, follow_tail, FollowParseSpec};
 use tracegrep::group::bump_group_count;
 use tracegrep::output::{
     ColorWriter, CountFormatter, Formatter, JsonFormatter, JsonLinesFormatter, TableFormatter,
@@ -120,12 +120,11 @@ fn run_follow<W: Write>(
     strict: bool,
     diag: &mut DiagnosticsSink<W>,
 ) -> anyhow::Result<bool> {
-    if cli.files.len() != 1 {
-        anyhow::bail!("--follow requires exactly one file path (not stdin)");
+    if cli.files.is_empty() {
+        anyhow::bail!("--follow requires at least one file path (not stdin)");
     }
-    let path = &cli.files[0];
-    if path.as_os_str() == OsStr::new("-") {
-        anyhow::bail!("--follow does not support stdin; pass a file path");
+    if cli.files.iter().any(|p| p.as_os_str() == OsStr::new("-")) {
+        anyhow::bail!("--follow does not support stdin; pass file paths");
     }
 
     let parse_spec = match cli.input {
@@ -136,16 +135,98 @@ fn run_follow<W: Write>(
     };
 
     let runtime = tokio::runtime::Runtime::new()?;
-    let path_ref = path.as_path();
 
     let stdout = io::stdout();
-    let mut out = stdout.lock();
-    let tty = out.is_terminal();
+    let tty = stdout.is_terminal();
     let eff = resolve_output(cli.format, tty);
-
     let fields = parsed_fields(cli.field_projection.as_ref());
 
     let mut any_match = false;
+
+    let multifollow = cli.files.len() > 1;
+
+    if multifollow {
+        match eff {
+            EffectiveOutput::Json => {
+                let attach_footer = fields.is_none();
+                if cli.jsonl {
+                    let mut f = if attach_footer {
+                        JsonLinesFormatter::new(&stdout)
+                    } else {
+                        JsonLinesFormatter::without_raw_footer(&stdout)
+                    };
+                    runtime.block_on(follow_paths(
+                        &cli.files,
+                        expr,
+                        &mut MatchFlagFmt {
+                            inner: &mut JsonProjectingFmt {
+                                inner: &mut f,
+                                fields: fields.as_deref(),
+                            },
+                            any_match: &mut any_match,
+                        },
+                    ))?;
+                    f.flush()?;
+                } else {
+                    let mut f = if attach_footer {
+                        JsonFormatter::new(&stdout)
+                    } else {
+                        JsonFormatter::without_raw_footer(&stdout)
+                    };
+                    runtime.block_on(follow_paths(
+                        &cli.files,
+                        expr,
+                        &mut MatchFlagFmt {
+                            inner: &mut JsonProjectingFmt {
+                                inner: &mut f,
+                                fields: fields.as_deref(),
+                            },
+                            any_match: &mut any_match,
+                        },
+                    ))?;
+                    f.flush()?;
+                }
+            }
+            EffectiveOutput::Count => {
+                if cli.group_by.is_some() {
+                    anyhow::bail!("--group-by is not supported with --follow");
+                }
+                let mut f = CountFormatter::new(stdout);
+                runtime.block_on(follow_paths(
+                    &cli.files,
+                    expr,
+                    &mut MatchFlagFmt {
+                        inner: &mut f,
+                        any_match: &mut any_match,
+                    },
+                ))?;
+                f.flush()?;
+            }
+            EffectiveOutput::Table => {
+                let color_enabled = tty && !cli.no_color;
+                let mut t = TableFormatter::with_default_max_buffer(stdout);
+                runtime.block_on(follow_paths(
+                    &cli.files,
+                    expr,
+                    &mut MatchFlagFmt {
+                        inner: &mut TableProjectingFmt {
+                            inner: &mut t,
+                            fields: fields.as_deref(),
+                            color_stdout: color_enabled,
+                        },
+                        any_match: &mut any_match,
+                    },
+                ))?;
+                t.flush()?;
+            }
+        }
+
+        return Ok(any_match);
+    }
+
+    let path = &cli.files[0];
+    let path_ref = path.as_path();
+    let mut out = stdout.lock();
 
     match eff {
         EffectiveOutput::Json => {
@@ -227,6 +308,23 @@ fn run_follow<W: Write>(
     }
 
     Ok(any_match)
+}
+
+/// Tracks whether any multiplexed watcher produced a formatter write (parity with `follow_tail`'s counter).
+struct MatchFlagFmt<'a, F: Formatter + ?Sized> {
+    inner: &'a mut F,
+    any_match: &'a mut bool,
+}
+
+impl<F: Formatter + ?Sized> Formatter for MatchFlagFmt<'_, F> {
+    fn write(&mut self, r: &Record) -> io::Result<()> {
+        *self.any_match = true;
+        self.inner.write(r)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 /// [`JsonFormatter`] / [`JsonLinesFormatter`] adapter applying optional field projection.

@@ -11,7 +11,8 @@ pub mod record;
 pub use diagnostics::DiagnosticsSink;
 pub use exit_codes::ExitCode;
 pub use follow::{
-    follow_path, follow_path_with_format, follow_tail, sniff_line_format, FollowParseSpec,
+    follow_path, follow_path_with_format, follow_paths, follow_tail, sniff_line_format,
+    FollowParseSpec,
 };
 pub use group::group_count;
 pub use output::{CountFormatter, Formatter, JsonFormatter, JsonLinesFormatter, TableFormatter};

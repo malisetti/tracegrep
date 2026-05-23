@@ -1,7 +1,7 @@
 //! Streaming follow mode (`--follow`): tail a file line-by-line with polling at EOF.
 
-use std::io;
-use std::path::Path;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -14,7 +14,52 @@ use crate::parser::resilience::{
     cli_hint_from_format, parse_cli_line, CliInputHint, ParsedCliLine,
 };
 use crate::query::Expr;
+use crate::record::Record;
 use crate::{sniff, Format};
+
+pub mod testing {
+    //! Helpers for integration tests (`==> … <==` banners normally go straight to stdout).
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    static CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
+    static BANNERS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    /// Start recording `follow` multiplex banners instead of printing them on stdout.
+    pub fn reset_and_enable_banner_capture() {
+        let mut guard = BANNERS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.clear();
+        CAPTURE_ENABLED.store(true, Ordering::SeqCst);
+    }
+
+    pub fn disable_banner_capture() {
+        CAPTURE_ENABLED.store(false, Ordering::SeqCst);
+    }
+
+    pub(super) fn capture_enabled() -> bool {
+        CAPTURE_ENABLED.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn push_banner(line: impl Into<String>) {
+        if !capture_enabled() {
+            return;
+        }
+        let mut guard = BANNERS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.push(line.into());
+    }
+
+    pub fn captured_banners() -> Vec<String> {
+        BANNERS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
 
 /// How each tailed physical line should be parsed (CLI `--input` analogue).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +89,42 @@ pub async fn sniff_line_format(path: &Path) -> anyhow::Result<Format> {
             continue;
         }
         return Ok(sniff(&line));
+    }
+}
+
+/// Emit a `tail -f`-style banner before the next formatter line when multiplexing outputs.
+///
+/// Callers **must not** pair this with [`Formatter`] wrappers that permanently hold [`std::io::Stdout`]’s
+/// global outer lock (`io::stdout().lock()` held across awaited work); prefixes take a temporary lock
+/// and would deadlock otherwise. Passing [`std::io::Stdout`]/`&Stdout`/`&mut Stdout`-like writers into
+/// formatters avoids that.
+#[inline]
+pub fn emit_follow_source_banner(path: &Path) -> io::Result<()> {
+    let line = format!("==> {} <==", path.display());
+    if testing::capture_enabled() {
+        testing::push_banner(line);
+        return Ok(());
+    }
+    writeln!(io::stdout().lock(), "{line}")?;
+    Ok(())
+}
+
+/// Follow **`paths`** concurrently from **EOF**, multiplexing readiness with Tokio scheduling.
+///
+/// With **exactly one** path, behaves like [`follow_path`] (`tail`-style banners are suppressed).
+///
+/// With **two or more** paths, emits `==> path <==` (via [`emit_follow_source_banner`]) before each
+/// matched record is written — same convention as BSD `tail -f` switching between files when several
+/// independent writers append concurrently, **ordering reflects whichever read wakes first**.
+pub async fn follow_paths<F: Formatter>(
+    paths: &[PathBuf],
+    expr: &Expr,
+    fmt: &mut F,
+) -> anyhow::Result<()> {
+    match paths.len() {
+        0 => anyhow::bail!("follow_paths requires at least one path"),
+        1 => follow_path(paths[0].as_path(), expr, fmt).await,
+        _ => follow_paths_many(paths, expr, fmt).await,
     }
 }
 
@@ -154,6 +235,83 @@ pub async fn follow_tail<F: Formatter, W: io::Write>(
                     .map_err(|e| anyhow::anyhow!("format write: {e}"))?;
             }
             ParsedCliLine::Record(_) => {}
+        }
+    }
+}
+
+async fn follow_paths_many<F: Formatter>(
+    paths: &[PathBuf],
+    expr: &Expr,
+    fmt: &mut F,
+) -> anyhow::Result<()> {
+    let (dispatch_tx, mut dispatch_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut join_set = tokio::task::JoinSet::new();
+
+    for path in paths {
+        let path = path.clone();
+        let expr = expr.clone();
+        let tx = dispatch_tx.clone();
+        join_set.spawn(async move {
+            let line_fmt = sniff_line_format(path.as_path()).await?;
+
+            struct MatchForwarder {
+                sender: tokio::sync::mpsc::UnboundedSender<(PathBuf, Record)>,
+                path: PathBuf,
+            }
+
+            impl Formatter for MatchForwarder {
+                fn write(&mut self, r: &Record) -> io::Result<()> {
+                    let _ = self.sender.send((self.path.clone(), r.clone()));
+                    Ok(())
+                }
+
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
+            }
+
+            let mut forwarder = MatchForwarder {
+                sender: tx,
+                path: path.clone(),
+            };
+            let mut silent_match = false;
+            let mut sink = io::sink();
+            let mut silent_diag = DiagnosticsSink::new(&mut sink);
+            follow_tail(
+                path.as_path(),
+                &expr,
+                &mut forwarder,
+                FollowParseSpec::Fixed(line_fmt),
+                true,
+                Some(&mut silent_diag),
+                &mut silent_match,
+            )
+            .await
+        });
+    }
+
+    drop(dispatch_tx);
+
+    loop {
+        tokio::select! {
+            msg = dispatch_rx.recv() => {
+                match msg {
+                    Some((path, record)) => {
+                        emit_follow_source_banner(path.as_path())?;
+                        fmt.write(&record)
+                            .map_err(|e| anyhow::anyhow!("format write: {e}"))?;
+                    }
+                    None => {
+                        anyhow::bail!("follow_paths multiplex dispatcher closed unexpectedly");
+                    }
+                }
+            },
+            joined = join_set.join_next(), if !join_set.is_empty() => {
+                let Some(joined) = joined else {
+                    anyhow::bail!("join_set unexpectedly empty while join awaited");
+                };
+                joined??;
+            },
         }
     }
 }
