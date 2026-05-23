@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{self, Write};
 
 use serde_json::{Map, Number, Value as JsonValue};
 
@@ -6,23 +6,25 @@ use crate::Record;
 
 use super::Formatter;
 
-pub struct JsonFormatter<W: Write> {
-    inner: W,
+/// Writes one compact JSON object per line (NDJSON) and [`Write::flush`]es after each record so
+/// consumers like `tail -f` see output immediately (unlike [`super::JsonFormatter`], which may
+/// buffer internally until flush).
+pub struct JsonLinesFormatter<W: Write> {
+    writer: W,
     attach_raw_footer: bool,
 }
 
-impl<W: Write> JsonFormatter<W> {
-    pub fn new(inner: W) -> Self {
+impl<W: Write> JsonLinesFormatter<W> {
+    pub fn new(w: W) -> Self {
         Self {
-            inner,
+            writer: w,
             attach_raw_footer: true,
         }
     }
 
-    /// Field projection emits only listed keys — skip the implicit `_raw` shim to avoid duplication.
-    pub fn without_raw_footer(inner: W) -> Self {
+    pub fn without_raw_footer(writer: W) -> Self {
         Self {
-            inner,
+            writer,
             attach_raw_footer: false,
         }
     }
@@ -52,15 +54,14 @@ fn record_json(r: &Record, attach_raw_footer: bool) -> JsonValue {
     JsonValue::Object(map)
 }
 
-impl<W: Write> Formatter for JsonFormatter<W> {
-    fn write(&mut self, r: &Record) -> std::io::Result<()> {
-        let value = record_json(r, self.attach_raw_footer);
-        serde_json::to_writer(&mut self.inner, &value)?;
-        self.inner.write_all(b"\n")?;
-        Ok(())
+impl<W: Write> Formatter for JsonLinesFormatter<W> {
+    fn write(&mut self, r: &Record) -> io::Result<()> {
+        serde_json::to_writer(&mut self.writer, &record_json(r, self.attach_raw_footer))?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
     }
 }

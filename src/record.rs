@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Record {
     fields: BTreeMap<String, Value>,
     raw: String,
